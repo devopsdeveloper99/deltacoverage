@@ -1,0 +1,100 @@
+name: Test & Coverage
+
+on:
+  push:
+    branches: [ develop, main, diff, feature/** ]
+  pull_request:
+    branches: [ develop, main ]
+
+jobs:
+  test-and-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          pytest --cov=src             --cov-report=xml:mounted-output/coverage.xml             --cov-report=html:mounted-output/htmlcov
+
+      - name: Calculate delta coverage
+        id: delta_coverage
+        run: |
+          python delta_coverage.py ${{ github.event.pull_request.base.ref || 'develop' }} > mounted-output/delta_coverage.txt
+          DELTA=$(tail -n1 mounted-output/delta_coverage.txt | awk '{print $NF}' | tr -d '%')
+          echo "delta_coverage=$DELTA" >> $GITHUB_OUTPUT
+
+      - name: Warn if delta coverage below 80%
+        if: steps.delta_coverage.outputs.delta_coverage != '' && steps.delta_coverage.outputs.delta_coverage < 80
+        run: |
+          echo "⚠️ WARNING: Delta coverage is below 80% (actual: ${{ steps.delta_coverage.outputs.delta_coverage }}%)."
+
+      - name: Check overall coverage
+        id: overall_coverage
+        run: |
+          COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' mounted-output/coverage.xml | head -1)
+          PERCENT=$(echo "$COVERAGE*100" | bc -l)
+          echo "Overall Coverage: $PERCENT%"
+          echo "overall_coverage=$PERCENT" >> $GITHUB_OUTPUT
+          if (( $(echo "$PERCENT < 80" | bc -l) )); then
+            echo "⚠️ WARNING: Overall coverage is below 80% (actual: $PERCENT%)."
+          else
+            echo "✅ Overall coverage is OK ($PERCENT%)."
+          fi
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: mounted-output/
+
+  deploy-coverage:
+    needs: test-and-coverage
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Download coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-reports
+          path: coverage
+      - name: Create index.html for reports
+        run: |
+          cat > coverage/index.html <<'EOF'
+          <html>
+          <head><title>Coverage Reports</title></head>
+          <body>
+            <h1>Coverage Reports</h1>
+            <ul>
+              <li><a href="htmlcov/index.html">📊 Full Coverage Report</a></li>
+              <li><a href="diff-coverage.html">📝 Diff Coverage Report</a></li>
+            </ul>
+          </body>
+          </html>
+          EOF
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload coverage artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: coverage
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
