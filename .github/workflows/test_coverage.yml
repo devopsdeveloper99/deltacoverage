@@ -46,13 +46,15 @@ jobs:
         id: overall_coverage
         run: |
           COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' mounted-output/coverage.xml | head -1)
-          PERCENT=$(echo "$COVERAGE*100" | bc)
+          PERCENT=$(echo "$COVERAGE*100" | bc -l)
           echo "Overall Coverage: $PERCENT%"
           echo "overall_coverage=$PERCENT" >> $GITHUB_OUTPUT
           if (( $(echo "$PERCENT < 80" | bc -l) )); then
             echo "⚠️ WARNING: Overall coverage is below 80% (actual: $PERCENT%)."
           else
             echo "✅ Overall coverage is OK ($PERCENT%)."
+          fi
+
       - name: Upload coverage reports
         uses: actions/upload-artifact@v4
         with:
